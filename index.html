@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reflorestamento</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 20px;
+    font-family: Arial, sans-serif; color: #20352a;
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    display: flex; justify-content: center; align-items: center;
+  }
+  main { width: min(100%, 980px); }
+  header { text-align: center; margin-bottom: 14px; }
+  h1 { margin: 0 0 6px; color: #1b5e20; font-size: clamp(28px, 5vw, 42px); }
+  header p { margin: 0; color: #496653; }
+  .panel {
+    background: rgba(255,255,255,.92); border: 1px solid #c8dfc9;
+    border-radius: 16px; padding: 14px; box-shadow: 0 8px 24px #244b2517;
+  }
+  .topline { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  #timer { font-size: 25px; font-weight: 800; color:#23452b; font-variant-numeric:tabular-nums; }
+  button {
+    border:0; border-radius:10px; padding:10px 16px; font-weight:700;
+    color:white; background:#2e7d32; cursor:pointer; font-size:14px;
+  }
+  button:hover { background:#1b5e20; }
+  canvas { display:block; width:100%; height:auto; border-radius:12px; background:#eaf4df; border:1px solid #c4d7b8; }
+  .scores { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+  .score { padding:12px; border-radius:11px; background:#f2f8ee; font-weight:700; }
+  .score.p2 { background:#fff5e9; }
+  .score strong { display:block; font-size:18px; margin-bottom:5px; }
+  .score span { font-size:14px; font-weight:500; }
+  .help { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; font-size:13px; line-height:1.6; }
+  .help div { padding:10px; background:#f7faf5; border-radius:10px; }
+  .help b { display:block; margin-bottom:3px; }
+  #message { text-align:center; min-height:24px; margin:12px 0 0; font-weight:700; color:#1b5e20; }
+  .overlay { position:fixed; inset:0; background:#102515aa; display:none; align-items:center; justify-content:center; padding:20px; }
+  .modal { max-width:460px; width:100%; background:white; padding:26px; border-radius:18px; text-align:center; box-shadow:0 15px 50px #0004; }
+  .modal h2 { color:#1b5e20; font-size:30px; margin:0 0 10px; }
+  .modal p { line-height:1.5; }
+  @media (max-width:600px) {
+    body { padding:10px; align-items:flex-start; }
+    .scores, .help { grid-template-columns:1fr; }
+    .panel { padding:9px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🌳 Reflorestamento</h1>
+    <p>Plante, cuide e faça a floresta crescer!</p>
+  </header>
+  <section class="panel">
+    <div class="topline">
+      <div id="timer">02:00</div>
+      <button id="restart">Reiniciar partida</button>
+    </div>
+    <canvas id="game" width="900" height="540" aria-label="Tabuleiro do jogo Reflorestamento"></canvas>
+    <div class="scores">
+      <div class="score"><strong style="color:#1769aa">🔵 JOGADOR 1</strong><span id="score1">🌱 5 sementes · 🌳 0 árvores</span></div>
+      <div class="score p2"><strong style="color:#c45a12">🟠 JOGADOR 2</strong><span id="score2">🌱 5 sementes · 🌳 0 árvores</span></div>
+    </div>
+    <div class="help">
+      <div><b style="color:#1769aa">Jogador 1 — lado esquerdo</b>W A S D: andar<br>E: plantar<br>Q: cuidar</div>
+      <div><b style="color:#c45a12">Jogador 2 — lado direito</b>Setas: andar<br>Enter: plantar<br>Shift: cuidar</div>
+    </div>
+    <p id="message">Cada árvore precisa de 3 cuidados para produzir 2 sementes.</p>
+  </section>
+</main>
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2 id="winner">Fim de jogo!</h2>
+    <p id="result"></p>
+    <button id="playAgain">Jogar novamente</button>
+  </div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const timerEl = document.getElementById('timer');
+  const overlay = document.getElementById('overlay');
+  const message = document.getElementById('message');
+  const cell = 75, cols = 12, rows = 6, startX = 0, startY = 45;
+  const players = [];
+  let plants = new Map(), startTime = 0, ended = false, raf = null;
+  const keys = new Set();
+
+  function reset() {
+    players.splice(0, players.length,
+      {x:2,y:2,seeds:5,planted:0,color:'#1976d2',side:[0,5]},
+      {x:9,y:2,seeds:5,planted:0,color:'#e65100',side:[6,11]});
+    plants = new Map();
+    startTime = performance.now();
+    ended = false;
+    overlay.style.display = 'none';
+    message.textContent = 'Cada árvore precisa de 3 cuidados para produzir 2 sementes.';
+    draw();
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(loop);
+  }
+  function plant(p) {
+    const key = `${p.x},${p.y}`;
+    if (p.seeds > 0 && !plants.has(key)) {
+      plants.set(key, 0); p.seeds--; p.planted++;
+      message.textContent = 'Semente plantada! Cuide dela para crescer.';
+    }
+  }
+  function care(p) {
+    const key = `${p.x},${p.y}`;
+    if (!plants.has(key)) {
+      message.textContent = 'Não há planta nessa casa para cuidar.';
+      return;
+    }
+    const level = plants.get(key) + 1;
+    if (level >= 3) {
+      plants.set(key, 0); p.seeds += 2;
+      message.textContent = 'Árvore crescida! Você ganhou 2 sementes.';
+    } else {
+      plants.set(key, level);
+      message.textContent = 'Sua planta cresceu. Continue cuidando!';
+    }
+  }
+  function handleKey(e, down) {
+    const k = e.key.toLowerCase();
+    if (['arrowup','arrowdown','arrowleft','arrowright',' ','enter','shift'].includes(k)) e.preventDefault();
+    if (!down) { keys.delete(k); return; }
+    if (keys.has(k) || ended) return;
+    keys.add(k);
+    const p1 = players[0], p2 = players[1];
+    const moves = {
+      w:[p1,0,-1], s:[p1,0,1], a:[p1,-1,0], d:[p1,1,0],
+      arrowup:[p2,0,-1], arrowdown:[p2,0,1],
+      arrowleft:[p2,-1,0], arrowright:[p2,1,0]
+    };
+    if (moves[k]) {
+      const [p,dx,dy] = moves[k], nx=p.x+dx, ny=p.y+dy;
+      if (ny>=0 && ny<rows && nx>=p.side[0] && nx<=p.side[1]) { p.x=nx; p.y=ny; }
+    } else if (k==='e') plant(p1);
+    else if (k==='q') care(p1);
+    else if (k==='enter') plant(p2);
+    else if (k==='shift') care(p2);
+    draw();
+  }
+  function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#e6f1dc'; ctx.fillRect(0,0,450,canvas.height);
+    ctx.fillStyle='#fff0dc'; ctx.fillRect(450,0,450,canvas.height);
+    ctx.fillStyle='#315b39'; ctx.font='bold 17px Arial'; ctx.textAlign='center';
+    ctx.fillText('TERRITÓRIO DO JOGADOR 1',225,25);
+    ctx.fillStyle='#98450f'; ctx.fillText('TERRITÓRIO DO JOGADOR 2',675,25);
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x++) {
+      const px=startX+x*cell, py=startY+y*cell;
+      ctx.fillStyle=x<6?'#d9ebc9':'#f8e6cd';
+      ctx.fillRect(px+2,py+2,cell-4,cell-4);
+      ctx.strokeStyle='#b3c9a7'; ctx.strokeRect(px+2,py+2,cell-4,cell-4);
+      const level=plants.get(`${x},${y}`);
+      if(level!==undefined) {
+        const cx=px+cell/2, cy=py+cell/2+1, r=[11,16,22][level];
+        ctx.fillStyle='#795548'; ctx.fillRect(cx-3,cy+5,6,19);
+        ctx.fillStyle=['#81c784','#43a047','#1b5e20'][level];
+        ctx.beginPath(); ctx.arc(cx,cy-3,r,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#286b32'; ctx.lineWidth=2; ctx.stroke();
+      }
+    }
+    ctx.setLineDash([8,7]); ctx.strokeStyle='#819486'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(450,45); ctx.lineTo(450,495); ctx.stroke(); ctx.setLineDash([]);
+    players.forEach((p,i)=>{
+      const cx=p.x*cell+cell/2, cy=startY+p.y*cell+cell/2;
+      ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(cx,cy,15,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='white'; ctx.lineWidth=3; ctx.stroke();
+      ctx.fillStyle='white'; ctx.font='bold 13px Arial'; ctx.fillText(String(i+1),cx,cy+5);
+    });
+    document.getElementById('score1').textContent=`🌱 ${players[0].seeds} sementes · 🌳 ${players[0].planted} árvores`;
+    document.getElementById('score2').textContent=`🌱 ${players[1].seeds} sementes · 🌳 ${players[1].planted} árvores`;
+  }
+  function finish() {
+    ended=true;
+    const [a,b]=players;
+    document.getElementById('winner').textContent=a.planted>b.planted?'Jogador 1 venceu!':b.planted>a.planted?'Jogador 2 venceu!':'Empate!';
+    document.getElementById('result').textContent=`Jogador 1: ${a.planted} árvores plantadas. Jogador 2: ${b.planted} árvores plantadas.`;
+    overlay.style.display='flex';
+  }
+  function loop(now) {
+    if(ended) return;
+    const left=Math.max(0,120-Math.floor((now-startTime)/1000));
+    timerEl.textContent=`${String(Math.floor(left/60)).padStart(2,'0')}:${String(left%60).padStart(2,'0')}`;
+    if(left<=0) { finish(); return; }
+    raf=requestAnimationFrame(loop);
+  }
+  window.addEventListener('keydown',e=>handleKey(e,true));
+  window.addEventListener('keyup',e=>handleKey(e,false));
+  window.addEventListener('blur',()=>keys.clear());
+  document.getElementById('restart').addEventListener('click',reset);
+  document.getElementById('playAgain').addEventListener('click',reset);
+  reset();
+})();
+</script>
+</body>
+</html>
